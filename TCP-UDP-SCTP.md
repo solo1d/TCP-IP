@@ -125,23 +125,23 @@ TCP连接所发生的实际分组交换情况, 包括连接建立, 数据传送 
 
 ### SCTP 四次握手
 
-![SCTP四次握手] (assets/SCTP四次握手.png)
+![SCTP四次握手](assets/SCTP四次握手.png)
 
-![SCTP四次握手2] (assets/SCTP四次握手2.png)
+![SCTP四次握手2](assets/SCTP四次握手2.png)
 
 ### SCTP 关联终止
 
 SCTP 不允许出现 半关闭状态, 当一端关闭某个关联时, 另一端必须停止发送新的数据. 关联关闭请求的接收端发送完已经排队的数据后, 完成关联的关闭.
 
-![SCTP关联终止] (assets/SCTP关联终止.png)
+ ![ SCTP关联终止 ](assets/SCTP关联终止.png)
 
 ### SCTP 状态转换图
 
-![SCTP状态转换图] (assets/SCTP状态转换图.png)
+![SCTP状态转换图](assets/SCTP状态转换图.png)
 
 ### SCTP 观察分组
 
-![SCTP关联中的分组交换] (assets/SCTP关联中的分组交换.png)
+![SCTP关联中的分组交换](assets/SCTP关联中的分组交换.png)
 
 ### SCTP 选项
 
