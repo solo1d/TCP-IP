@@ -5,7 +5,7 @@
 - [UDP的connect函数](#UDP的connect函数)
   - [给一个UDP套接字多次调用connect](#给一个UDP套接字多次调用connect)
 - [使用select函数的TCP和UDP回射服务器程序](#使用select函数的TCP和UDP回射服务器程序)
-  - 
+- [小结](#小结)
 
 
 
@@ -116,9 +116,116 @@ ssize_t sendto  ( int sockfd, const void* buff, size_t nbytes, int flags,
     - 将地址结构清0, 并把参数中的 `sin_family` 修改为 AF_UNSPEC, 即可断开套接字
       - 这样做会导致返回一个 EAFNOSUPPORT错误, 可以忽略.
 
+```c
+/* 客户端 */
+#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <strings.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/errno.h>
+#define  SERV_PORT  9987
+
+int
+main(int argc, char* argv[]){
+    int        sockfd;
+    socklen_t  len;
+    struct sockaddr_in  cliaddr, servaddr;
+        
+    char strl[46] = { [0 ... 45] = 0 };
+    if (argc != 2){
+        fprintf(stderr,"uasge: udpcli <IPaddress>");
+        exit(1);
+    }
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    memset(&servaddr, 0, sizeof(struct sockaddr_in));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port = htons(SERV_PORT);
+    inet_pton(AF_INET, argv[1], &servaddr.sin_addr);
+    connect(sockfd, (struct sockaddr*)&servaddr, sizeof(servaddr));
+    
+    len = sizeof(cliaddr);
+    getsockname(sockfd, (struct sockaddr*)&cliaddr, &len);
+    printf("local address %s:%d\n", 
+           inet_ntop(AF_INET, &cliaddr.sin_addr, strl, 46),ntohs(cliaddr.sin_port));
+    exit(0);
+}
+```
+
+
+
 ### 使用select函数的TCP和UDP回射服务器程序
 
+```c
+#include "unp.h"
+int
+main(int argc, char* argv[])
+{
+    int      listenfd, connfd, udpfd, nready, maxfdp1;
+    char     mesg[MAXLINE] = { [ 0 ... MAXLINE-1] = 0 };
+    pid_t    childpid;    // 子进程
+    fd_set   rset;        // 信号
+    ssize_t  n;
+    socklen_t  len;
+    const int on = 1;
+    struct sockaddr_in cliaddr, servaddr;
+    void sig_chld(int);     // 非阻塞 回收已终止的子进程
+        /* 创建TCP套接字并绑定 */
+    listenfd = socket(AF_INET, SOCK_STREAM, 0  );
+    memset(&servaddr, 0, sizeof(struct sockaddr_in));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port   = htons(SERV_PORT);     //SERV_PORT 9877
+    servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    Setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)); // 端口复用,防止该端口上已有连接存在
+    Bind(listenfd, (struct sockaddr*)&servaddr, sizeof(servaddr));
+    Listen(listenfd, LISTENQ);  // LISTENQ        1024
+        /* 创建UDP套接字 */
+    udpfd = Socket(AF_INET, SOCK_DGRAM, 0);
+    memset(&servaddr, 0, sizeof(struct sockaddr_in));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port   = htons(SERV_PORT);     //SERV_PORT 9877
+    servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    Bind(udpfd, (struct sockaddr*)&servaddr, sizeof(servaddr));  //绑定UDP套接字
+    
+    Signal(SIGCHLD, sig_chld);   // 必须调用 waitpid() 函数
+    FD_ZERO(&rset);
+    maxfdp1 = max(listenfd, udpfd) +1 ; // 最大描述符 +1
+    for (;;){
+        FD_SET(listenfd, &rset);
+        FD_SET(udpfd, &rset);
+        if ( (nready = select(maxfdp1, &rset, NULL, NULL, NULL)) < 0) {// 轮询, 无阻塞
+            if (errno == EINTR)
+                continue;
+            else
+                err_sys("select error");
+        }
+        if (FD_ISSET(listenfd, &rset)){ // 是否来了新TCP的连接
+            len = sizeof(cliaddr);
+            connfd = Accept(listenfd, (struct sockaddr*)&cliaddr, &len);
+            if ( (childpid = Fork()) == 0){  // 进入子进程.
+                Close(listenfd);
+                str_echo(connfd);
+                exit(0);
+            }
+            Close(connfd);
+        }
+        if (FD_ISSET(udpfd, &rset)){
+            len = sizeof(cliaddr);
+            n = Recvfrom(udpfd, mesg, MAXLINE, 0, (struct sockaddr*)&cliaddr, &len);
+            printf("n = %ld\n ",n);
+            Sendto(udpfd, mesg, n, 0,(struct sockaddr*)&cliaddr, len);
+        }
+    }
+}
+```
 
 
 
+## 小结
+
+- UDP套接字可能产生异步错误, 必须是已连接的UDP套接字才可以接受到这些错误.
+- UDP没有流量控制, 很容易淹没 发送缓冲区和接收缓冲区
 
