@@ -6,6 +6,8 @@
   - [给一个UDP套接字多次调用connect](#给一个UDP套接字多次调用connect)
 - [使用select函数的TCP和UDP回射服务器程序](#使用select函数的TCP和UDP回射服务器程序)
 - [小结](#小结)
+- [简单UDP通讯服务器端](#简单UDP通讯服务器端)
+- [简单UDP通讯客户端](#简单UDP通讯客户端)
 
 
 
@@ -19,6 +21,13 @@
 - ==**MAXOS 最大的UDP接收缓冲区是7Mb**==
   - **虽然可以设置还这么大的值, 但还是会被发送端的UDP数据报淹没, 也就是说会丢包.**
 - ==**MAXOS 最大的UDP一次性发送的字段长度为 65507字节,一次性接收也是这么多**==
+  - **IPv4的数据报最大为65535字节, (16位总长度字段限定), IPv4首部需要20字节, UDP首部需要8字节**
+    - ==**留给UDP用户数据最大为 65507字节.**==
+  - **IPv6没有任何拓展首部, 扣除IPv6首部的净荷字段后最大为65535字节,在扣除8字节UDP首部.**
+    - ==**留给UDP用户数据最大为 65527字节.**==
+  - ==虽然可以发送这么大的数据报,但是在经过路由的时候,可能会发生分片或者直接丢弃, IP支持的重组缓冲区大小只有576字节.==
+- ==**使用 `sudo netstat -s` 可以查看收到的数据报的数量和详细信息**==
+  - **在这个命令的输出中寻找 `dropped due to full socket buffers`  ,代表的是 因套接字缓冲区满而丢弃的计数器的值**
 
 # 基本UDP套接字编程
 
@@ -233,4 +242,223 @@ main(int argc, char* argv[])
 - ==`ping` 命令可以通过参数来获得ICMP消息==
   - -v 参数就可以获得 ICMP消息.
   - `-i  60` 可以指定每60秒就发送一次发组. 也就是发送分组的频率
+
+
+
+
+
+
+
+## 简单UDP通讯服务器端
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/syslimits.h>
+#include <arpa/inet.h>
+#include <sys/errno.h>
+#include <netinet/in.h>
+
+#define S_UDP_PORT  8890
+#define MAXLIEN     7340032
+int
+main(void){
+    int     udpfd, n, rcvlen;
+    char    buf[MAXLIEN];
+    char    clip[40] = { [ 0 ... 39] = 0 };
+    socklen_t  len, flag;
+    struct sockaddr_in  server,client;
+    ssize_t  red;
+    
+    rcvlen = MAXLIEN;
+    n = 1;
+    
+    memset(&server, 0, sizeof(struct sockaddr_in));
+    memset(&client, 0, sizeof(struct sockaddr_in));
+
+    // UDP服务器IP 192.168.0.230  端口 8890
+    if ( inet_pton(AF_INET, "192.168.0.230", &server.sin_addr.s_addr) <= 0){
+        fprintf(stderr, "FUNCTION: inet_pton(127.0.0.1) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno) );
+        exit(errno);
+    }
+    
+    // 本服务器监听 8890端口
+    server.sin_port = htons(S_UDP_PORT);  // 8890
+    server.sin_family = AF_INET;
+    
+    if ( (udpfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
+        fprintf(stderr, "FUNCTION: socket error line = %d; errno = %s,\n", __LINE__ ,strerror(errno));
+        exit(errno);
+    }
+    
+    if ( setsockopt(udpfd, SOL_SOCKET, SO_REUSEADDR , &n, sizeof(n)) < 0){
+        fprintf(stderr, "FUNCTION: setsockopt(SO_REUSEADDR  ) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno));
+        shutdown(udpfd, SHUT_RDWR);
+        exit(errno);
+    }
+    
+    if ( setsockopt(udpfd, SOL_SOCKET, SO_REUSEPORT, &n, sizeof(n)) < 0){
+        fprintf(stderr, "FUNCTION: setsockopt(SO_REUSEPORT ) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno));
+        shutdown(udpfd, SHUT_RDWR);
+        exit(errno);
+    }
+    
+    if ( setsockopt(udpfd, SOL_SOCKET, SO_RCVBUF, &rcvlen, sizeof(rcvlen)) < 0){
+        fprintf(stderr, "FUNCTION: setsockopt(SO_RCVBUF) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno));
+        shutdown(udpfd, SHUT_RDWR);
+        exit(errno);
+    }
+
+    
+    if ( getsockopt(udpfd, SOL_SOCKET, SO_RCVBUF, &rcvlen, &flag ) < 0 ){
+        fprintf(stderr, "FUNCTION: getsockopt(SO_SNDBUF) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno) );
+        shutdown(udpfd, SHUT_RDWR);
+        exit(errno);
+    }
+    else
+        fprintf(stdout ,"当前套接字接收缓冲区为 %d \n", rcvlen);
+    
+    if ( bind(udpfd, (struct sockaddr*)&server, sizeof(struct sockaddr)) < 0 ){
+        fprintf(stderr, "FUNCTION: bind(server) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno) );
+        shutdown(udpfd, SHUT_RDWR);
+        exit(errno);
+    }
+    
+    int pp = 1 ;
+    for ( ;; ){
+        printf("\t已启动\n");
+        len = sizeof(client);
+        red = recvfrom(udpfd, buf, MAXLIEN, 0, (struct sockaddr*)&client, &len);
+        if ( inet_ntop(AF_INET, &client.sin_addr, clip, 40)  == NULL )
+            fprintf(stderr, "错误,没有读取到客户端的IP地址\n");
+        else
+            printf("客户端IP : %s, 端口号: %d\n", clip, ntohs(client.sin_port));
+        printf("\t\t收到的数据长度为: %ld 字节, %.5s \n",red,buf);
+        printf("\n\t进入下次循环 %d \n", pp++);
+    }
+    
+    return 0;
+}
+```
+
+
+
+
+
+## 简单UDP通讯客户端
+
+```c
+#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <sys/errno.h>
+#include <limits.h>
+#include <sys/syslimits.h>
+
+#define  C_UDP_PORT    8891
+#define  S_UDP_PORT    8890
+
+#define  MAXLEN        65507
+
+int main(void){
+    int        udpfd, n, senbuf, resenbuf;
+    char       buf[MAXLEN]= { [0 ... MAXLEN-2]='a','\0' };
+    ssize_t    len ;
+    socklen_t  flag, l;
+    
+    struct sockaddr_in  client, server;
+    
+    senbuf = MAXLEN;
+    resenbuf = 0;
+    l = sizeof(resenbuf);
+    memset(&client, 0, sizeof(struct sockaddr_in));
+    memset(&server, 0, sizeof(struct sockaddr_in));
+    
+    // UDP本地IP 192.168.0.230 端口 8891
+    if ( inet_pton(AF_INET, "192.168.0.230", &client.sin_addr.s_addr) <= 0){
+        fprintf(stderr, "FUNCTION: inet_pton(127.0.0.1) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno) );
+        exit(errno);
+    }
+    // UDP服务器IP 192.168.0.230 端口 8890
+    if ( inet_pton(AF_INET, "192.168.0.230", &server.sin_addr.s_addr) <= 0){
+        fprintf(stderr, "FUNCTION: inet_pton(192.168.0.228) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno) );
+        exit(errno);
+    }
+    server.sin_port = htons(S_UDP_PORT);  // 8890
+    server.sin_family = AF_INET;
+    
+    client.sin_family = AF_INET;
+    client.sin_port   = htons(C_UDP_PORT);  // 8891
+    
+    
+    if ( (udpfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
+        fprintf(stderr, "FUNCTION: socket error line = %d; errno = %s,\n", __LINE__ ,strerror(errno));
+        exit(errno);
+    }
+    
+    n = 1;
+    if ( setsockopt(udpfd, SOL_SOCKET, SO_REUSEADDR , &n, sizeof(n)) < 0){
+        fprintf(stderr, "FUNCTION: setsockopt(SO_REUSEADDR ) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno));
+        shutdown(udpfd, SHUT_RDWR);
+        exit(errno);
+    }
+    if ( setsockopt(udpfd, SOL_SOCKET,  SO_REUSEPORT, &n, sizeof(n)) < 0){
+        fprintf(stderr, "FUNCTION: setsockopt( SO_REUSEPORT) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno));
+        shutdown(udpfd, SHUT_RDWR);
+        exit(errno);
+    }
+    
+    if ( setsockopt(udpfd, SOL_SOCKET, SO_SNDBUF, &senbuf, sizeof(senbuf)) < 0){
+        fprintf(stderr, "FUNCTION: setsockopt(SO_SNDBUF) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno) );
+        shutdown(udpfd, SHUT_RDWR);
+        exit(errno);
+    }
+        
+    if ( getsockopt(udpfd, SOL_SOCKET, SO_SNDBUF, &resenbuf, &flag ) < 0 ){
+        fprintf(stderr, "FUNCTION: getsockopt(SO_SNDBUF) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno) );
+        shutdown(udpfd, SHUT_RDWR);
+        exit(errno);
+    }
+    else
+        fprintf(stdout ,"当前套接字发送缓冲区为 %d \n", resenbuf);
+    
+    if ( bind(udpfd, (struct sockaddr*)&client, sizeof(struct sockaddr)) < 0 ){
+        fprintf(stderr, "FUNCTION: bind(client) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno) );
+        shutdown(udpfd, SHUT_RDWR);
+        exit(errno);
+        
+    }
+    
+    if ( connect(udpfd, (struct sockaddr*)&server, sizeof(struct sockaddr)) < 0){
+        fprintf(stderr, "FUNCTION: connect(server) error line = %d; errno = %s,\n", __LINE__ ,strerror(errno) );
+        shutdown(udpfd, SHUT_RDWR);
+        exit(errno);
+    }
+    
+    // 用本地绑定的 127.0.0.1 ,向服务器 192.168.0.230发送数据.
+    for ( ;; ){
+        
+        printf("没有出错, 开始发送长度为 %lu 的数据报\n",strlen(buf));
+        if( (len = write(udpfd, buf, MAXLEN) ) < 0){
+            if( errno == EINTR && len == -1 ){
+                sleep(10);
+                continue;
+            }
+            else{
+                shutdown(udpfd, SHUT_RDWR);
+                exit(errno);
+            }
+        }
+        sleep(3);
+    }
+}
+```
 
