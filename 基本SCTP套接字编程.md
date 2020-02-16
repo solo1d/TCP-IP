@@ -6,6 +6,17 @@ $gcc -Wall  -o a.out a.c -lsctp
 
 **sctp 主要需求的头文件有: `<sys/types> , <sys/socket.h>, <netinet/sctp.h>`**
 
+```c
+填写头文件时, 必须按照以下顺序来写,  否则会出现莫名其妙的错误.
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <netinet/in.h> 
+#include <netinet/sctp.h>
+```
+
+
+
 # 目录
 
 - [安装和开启SCTP支持](#安装和开启SCTP支持)
@@ -26,13 +37,17 @@ $gcc -Wall  -o a.out a.c -lsctp
   - [shutdown函数](#shutdown函数)
 - [通知](#通知)
   - [对应事件预定字段](#对应事件预定字段)
+    - [SCTP_DATA_IO_EVENT 查看消息到达所在的流号](#SCTP_DATA_IO_EVENT)
     - [SCTP_ASSOC_CHANGE    关联更改事件](#SCTP_ASSOC_CHANGE关联更改事件)
     - [SCTP_PEER_ADDR_CHANGE  地址事件](#SCTP_PEER_ADDR_CHANGE地址事件)
     - [SCTP_REMOTE_ERROR   远程错误事件](#SCTP_REMOTE_ERROR远程错误事件)
     - [SCTP_SEND_FAILED  数据发送失败事件](#SCTP_SEND_FAILED数据发送失败事件)
     - [SCTP_SHUTDOWN_EVENT    关机事件](#SCTP_SHUTDOWN_EVENT关机事件)
     - [SCTP_ADAPTION_INDICATION   适应层指示参数](#SCTP_ADAPTION_INDICATION适应层指示参数)
-- [一到多式流分回射服务器程序](#一到多式流分回射服务器程序)
+    - [SCTP_PARTIAL_DELIVERY_EVENT  部分递送API事件](#SCTP_PARTIAL_DELIVERY_EVENT)
+- [头端阻塞](#头端阻塞)
+- [SCTP一到多式流分回射服务器程序](#SCTP一到多式流分回射服务器程序)
+- [SCTP一到多式流分回射客户端程序](#SCTP一到多式流分回射客户端程序)
 - 
 
 
@@ -127,9 +142,10 @@ $gcc -Wall  -o a.out a.c -lsctp
 - ==**SCTP 套接字分类**==
   - **一到一套接字**
     - 对应一个单独的 SCTP 关联. (SCTP的关联是 两个系统之间的一个连接)
-    - 类型是 `SCOK_STREAM` , 协议为 `IPPROTO_SCTP` 网际网套接字,协议族为`AF_INET 或 AF_INET6`
+    - 类型是 `SCOK_STREAM` , 协议为 `IPPROTO_SCTP` ,网际网套接字,协议族为`AF_INET 或 AF_INET6`
   - **一到多套接字**
     - 一个给定套接字上可以同时有多个活跃的SCTP 关联.`(类似于绑定了端口的UDP套接字 正在接收其他很多的套接字发送的数据报)`
+    - 类型是 `SOCK_SEQPACKET` ,协议为 `IPPROTO_SCTP`, 网际网套接字,协议族为`AF_INET 或 AF_INET6`
 
 
 
@@ -164,6 +180,7 @@ $gcc -Wall  -o a.out a.c -lsctp
   - **关联事件 可能被启用, 因此要是应用进程不希望收到这些事件, 就得使用 `SCTP_EVENTS` 套接字选项显示禁用他们.**
     - **默认情况下只有 `sctp_data_io_event` 事件会启用, 它给 `recvmsg` 和`sctp_recvmsg` 调用提供辅助数据.( 适用一到多 和 一到一)**
 - ==**客户端创建完套接字并且初次调用 `sctp_sendto`函数时, 将导致隐式建立关联, 而数据请求由四路握手的第三个分组捎带到服务器**==
+- ==**一到多 类型是 `SOCK_SEQPACKET` , 协议为 `IPPROTO_SCTP` 网际网套接字,协议族为`AF_INET 或 AF_INET6`**==
 
 <img src="assets/SCTP一到多形式的套接字函数.png" alt="SCTP一到多形式的套接字函数" style="zoom:50%;" />
 
@@ -349,7 +366,7 @@ ssize_t sctp_recvmsg (int scokfd,  void* msg,  size_t  msgsz,
      msgsz :接收缓存区msg的字节长度
       from :发送消息者的信息结构,包括地址,端口,协议
    fromlen :发送消息这的信息结构的字节长度
-     sinfo :通知被启用时,会有与消息相关的信息来填充这个结构, 传出参数,成员 .sinfo_stream 是流号
+     sinfo :通知被启用时,会有与消息相关的信息来填充这个结构,传出参数,成员 .sinfo_stream 是流号
  msg_flags :存放 可能有的 消息标志(通知), 传出参数.
    
 返回值:
@@ -370,7 +387,7 @@ int sctp_opt_info (int sockfd,  sctp_assoc_t assoc_id,  int opt, void* arg,
                    socklen_t* siz);
 参数:
     sockfd :套接字描述符
-  assoc_id :可能存在的关联标识
+  assoc_id :可能存在的关联标识,默认情况下可给0
        opt :是SCTP的套接字选项.
        arg :传出参数 , 已获取的选项当前值会存入这里
        siz :是arg参数的长度.( 是传入 传出参数 )
@@ -463,13 +480,13 @@ int sctp_peeloff (int sockfd, sctp_assoc_t id);
 > sctp_tlv.sn_type = SCTP_SEND_FAILED;      /* 预定字段: sctp_send_failure_event */
 > sctp_tlv.sn_type = SCTP_SHUTDOWN_EVENT;     /* 预定字段: sctp_shutdown_event */
 > sctp_tlv.sn_type = SCTP_ADAPTION_INDEICATION; 
->                                    // 预定字段: sctp_adaption_layer_event
+>                                 // 预定字段: sctp_adaption_layer_event
 > sctp_tlv.sn_type = SCTP_PARTIAL_DELIVERY_EVENT;  
->                                   // 预定字段: sctp_partial_delivery_event
+>                                // 预定字段: sctp_partial_delivery_event
 > sctp_tlv.sn_type = SCTP_ASOC_CHANGE;  // 预定字段: sctp_association_event
 > 
 > 
-> // 下面是预定字段,  为1时开启 通知事件
+> // 下面是预定字段,  某个成员为1时开启 对应的通知事件
 > struct sctp_event_subscribe {
 > 	uint8_t sctp_data_io_event;
 > 	uint8_t sctp_association_event;    
@@ -483,6 +500,7 @@ int sctp_peeloff (int sockfd, sctp_assoc_t id);
 > 	uint8_t sctp_sender_dry_event;
 > 	uint8_t sctp_stream_reset_event;
 > };
+> 
 > 
 > 
 > struct sctp_sndrcvinfo {
@@ -505,6 +523,26 @@ int sctp_peeloff (int sockfd, sctp_assoc_t id);
 > ```
 
 ### 对应事件预定字段
+
+#### SCTP_DATA_IO_EVENT
+
+==允许服务器查看 `sctp_sndrcvinfo` 结构, 服务器可以从该结构确定 消息到达所在的流号==
+
+**启用`sctp_data_io_event`事件将导致在每次读取用户数据时接收到`sctp_sndrcvinfo`结构**
+
+**通常使用`recvmsg`调用在辅助数据中接收此信息。 应用程序还可以使用`sctp_recvmsg`调用，该调用将使用此信息填充指向`sctp_sndrcvinfo`结构的指针.**
+
+```c
+使用下面的格式来开启事件的通知 :
+
+struct sctp_event_subscribe     evnts;
+evnts.sctp_data_io_event = 1;
+setsockopt(sock_fd, IPPROTO_SCTP, SCTP_EVENTS, &evnts, sizeof(evnts));
+```
+
+
+
+
 
 #### SCTP_ASSOC_CHANGE关联更改事件
 
@@ -677,11 +715,348 @@ struct sctp_pdapi_event {
 
 
 
+## 头端阻塞
+
+> **SCTP中的流 (stream) 不同于 TCP 中的字节流, 它是关联内部具有先后顺序的一个消息序列.**
+>
+> ==**这样可以尽可能的减少头端阻塞**==
+
+**这种以 流 本身而不是以流所在关联为单位进行消息排序的做法 用于避免使用单个 TCP 字节流到值的头端阻塞现象.**
+
+> ==**头端阻塞 发生在一个 TCP分节丢失, 导致其后续分节不按序到达接收端的时候, 后续分节将被延迟递送, 等待那个丢失的TCP分节重传过来, 然后再向应用进程传递.**==
+>
+> **头端阻塞 保证了 应用进程可以按顺序接收数据.**
+
+- **[SCTP一到多式流分回射客户端程序](#SCTP一到多式流分回射客户端程序) 内的 `sctpstr_cli_echoall` 函数 就将头端阻塞减少到最小.**
 
 
-# 一到多式流分回射服务器程序
+
+
+
+# SCTP一到多式流分回射服务器程序
+
+- **编译时需要添加 -lsctp 参数.**
+
+```c
+/*
+ * 本服务器不希望收到来自 sri结构的净荷协议ID,标志,以及可能改动过的流号发送回消息本身.
+ * 服务器依赖于 sctp_sendrcvinfo 结构中的信息和 cliaddr 中返回的地址定位对端的关联地址并反送回射消息.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/errno.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <netinet/in.h>
+#include <netinet/sctp.h>
+
+
+#ifndef BUFFSIZE
+#define BUFFSIZE 8192
+#endif
+
+#ifndef SERV_PORT
+#define SERV_PORT 9877
+#endif
+
+#ifndef LISTENQ
+#define LISTENQ 1024
+#endif
+
+
+/*-----------------------------------------------*/
+int
+sctp_get_no_strms(int sock_fd,struct sockaddr *to, socklen_t tolen);
+
+sctp_assoc_t
+sctp_address_to_associd(int sock_fd, struct sockaddr *sa, socklen_t salen);
+
+ssize_t
+Sctp_recvmsg(int s, void *msg, size_t len,
+         struct sockaddr *from, socklen_t *fromlen,
+         struct sctp_sndrcvinfo *sinfo,
+             int *msg_flags);
+
+
+ssize_t
+Sctp_sendmsg (int s, void *data, size_t len, struct sockaddr *to,
+          socklen_t tolen, uint32_t ppid, uint32_t flags,
+              uint16_t stream_no, uint32_t timetolive, uint32_t context);
+
+ssize_t
+Sctp_bindx(int sock_fd,struct sockaddr_storage *at,int num,int op);
+
+
+void
+Getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlenptr);
+/*-----------------------------------------------*/
 
 
 
 
+
+int          // 2
+main(int argc, char* argv[]){
+    int        sock_fd,  msg_flags;
+    char       readbuf[BUFFSIZE]={ [0 ... BUFFSIZE-1]=0 };   // BUFFSIZE = 8192
+    struct sockaddr_in       servaddr, cliaddr;
+    struct sctp_sndrcvinfo   sri;
+    struct sctp_event_subscribe     evnts;
+    int        stream_increment=1;
+    socklen_t  len;
+    size_t    rd_sz;  // x86-64系统时是8字节, x86系统时是4字节
+    
+    if (argc == 2)
+        stream_increment = atoi(argv[1]);   // 决定是否增长外来消息的 流号, >1 ON ,  <1 OFF
+    sock_fd = socket(AF_INET, SOCK_SEQPACKET, IPPROTO_SCTP);      //15, SCTP 一到多套接字
+    
+    memset(&servaddr, 0, sizeof(servaddr)); memset(&cliaddr,  0, sizeof(cliaddr ));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port   = htons(SERV_PORT);   //9877
+    servaddr.sin_addr.s_addr   = htonl(INADDR_ANY); // 告知系统 在关联中使用所有可用的本地 地址
+    bind(sock_fd, (struct sockaddr*)&servaddr, sizeof(servaddr));     //20
+    
+    evnts.sctp_data_io_event = 1;   // 开启某个事件的通知
+    setsockopt(sock_fd, IPPROTO_SCTP, SCTP_EVENTS, &evnts, sizeof(evnts));
+    listen(sock_fd, LISTENQ);      //1024  , 开启外来关联
+    for (;;){
+        len  = sizeof(struct sockaddr_in);         // 26, 服务器初始化客户套接字地址结构大小
+        rd_sz =sctp_recvmsg(sock_fd, readbuf, sizeof(readbuf),          /* 这里会发生阻塞. 等待任何一个远程对端的消息 */
+                            (struct sockaddr*)&servaddr, &len, &sri,
+                            &msg_flags);
+        if (stream_increment){           //29 ,  是否手动的将 每次回复消息的 流号+1 并反送
+            sri.sinfo_stream++;
+            if (sri.sinfo_stream >=
+                   sctp_get_no_strms(sock_fd,(struct sockaddr*)&cliaddr,len))
+                sri.sinfo_stream = 0;
+        }
+        Sctp_sendmsg(sock_fd, readbuf, rd_sz, (struct sockaddr*)&cliaddr, len, sri.sinfo_ppid, sri.sinfo_flags, sri.sinfo_stream, 0, 0);    //35, 发送回相应
+    }
+}
+
+
+int
+sctp_get_no_strms(int sock_fd,struct sockaddr *to, socklen_t tolen)
+{
+    socklen_t retsz;
+    struct sctp_status status;
+    retsz = sizeof(status);
+    memset(&status, 0, sizeof(status));
+
+    status.sstat_assoc_id = sctp_address_to_associd(sock_fd,to,tolen);
+    Getsockopt(sock_fd,IPPROTO_SCTP, SCTP_STATUS,
+           &status, &retsz);
+    return(status.sstat_outstrms);
+}
+
+
+void
+Getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlenptr)
+{
+    if (getsockopt(fd, level, optname, optval, optlenptr) < 0)
+        fprintf(stderr, "%s",strerror(errno));
+        exit(1);
+}
+
+sctp_assoc_t
+sctp_address_to_associd(int sock_fd, struct sockaddr *sa, socklen_t salen)
+{
+    struct sctp_paddrparams sp;
+    unsigned int siz;
+
+    siz = sizeof(struct sctp_paddrparams);
+    memset(&sp, 0, siz);
+    memcpy(&sp.spp_address,sa,salen);
+    sctp_opt_info(sock_fd,0,
+           SCTP_PEER_ADDR_PARAMS, &sp, &siz);  // 获得客户端 地址
+    return(sp.spp_assoc_id);
+}
+
+ssize_t
+Sctp_recvmsg(int s, void *msg, size_t len,
+         struct sockaddr *from, socklen_t *fromlen,
+         struct sctp_sndrcvinfo *sinfo,
+         int *msg_flags)
+{
+    ssize_t ret;
+    ret = sctp_recvmsg(s,msg,len,from,fromlen,sinfo,msg_flags);
+    if(ret < 0){
+        fprintf(stderr, "sctp_recvmsg: %s",strerror(errno));
+        exit(1);
+    }
+    return(ret);
+}
+
+
+ssize_t
+Sctp_sendmsg (int s, void *data, size_t len, struct sockaddr *to,
+          socklen_t tolen, uint32_t ppid, uint32_t flags,
+          uint16_t stream_no, uint32_t timetolive, uint32_t context)
+{
+    ssize_t ret;
+    ret = sctp_sendmsg(s,data,len,to,tolen,ppid,flags,stream_no,
+              timetolive,context);
+    if(ret < 0){
+        fprintf(stderr, "sctp_sendmsg: %s",strerror(errno));
+        exit(1);
+    }
+    return(ret);
+}
+
+ssize_t
+Sctp_bindx(int sock_fd,struct sockaddr_storage *at,int num,int op)
+{
+    ssize_t ret;
+    ret = sctp_bindx(sock_fd,(struct sockaddr*)&at,num,op);
+    if(ret < 0){
+        fprintf(stderr, "sctp_bindx : %s",strerror(errno));
+        exit(1);
+    }
+    return(ret);
+}
+
+```
+
+
+
+# SCTP一到多式流分回射客户端程序
+
+```c
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/sctp.h>
+#include <sys/types.h>
+#include <string.h>
+
+#ifndef BUFFSIZE
+#define BUFFSIZE 8192
+#endif
+#ifndef SERV_PORT
+#define SERV_PORT 9877
+#endif
+#ifndef LISTENQ
+#define LISTENQ 1024
+#endif
+#ifndef  MAXLINE
+#define  MAXLINE 2048
+#endif
+#ifndef  SCTP_MAXLINE
+#define  SCTP_MAXLINE  800
+#endif
+
+#define SERV_MAX_SCTP_STRM    10    /* 正常最大流 */
+
+
+void
+sctpstr_cli(FILE* fp, int sock_fd, struct sockaddr* to, socklen_t tolen);
+
+void
+sctpstr_cli_echoall (FILE* fp, int sock_fd, struct sockaddr* to, socklen_t tolen);
+
+int
+main(int argc, const char * argv[]) {
+    int      sock_fd;
+    struct sockaddr_in           servaddr;
+    struct sctp_event_subscribe  evnts;
+    int echo_to_all = 0;
+    
+    
+    if (argc < 2)
+        printf("Mising host argument - use ' %s host [echo]' \n", argv[0]);
+                  // 缺少主机参数, 就是服务器IPv4地址
+    if (argc > 2){
+         printf ("Echoing mesages to all streams\n" );   // 向所有流回送消息
+         echo_to_all = 1;
+    }
+    sock_fd = socket(AF_INET, SOCK_SEQPACKET, IPPROTO_SCTP );   // 创建 sctp一到多套接字
+    memset(&servaddr, 0, sizeof(struct sockaddr_in));
+    servaddr.sin_family  = AF_INET;
+    servaddr.sin_port    = htons(SERV_PORT);
+    inet_pton(servaddr.sin_family, argv[1], &servaddr.sin_addr); // 填写服务器IP
+
+    memset(&evnts, 0, sizeof(struct sctp_event_subscribe));
+    evnts.sctp_data_io_event = 1;     // 开启事件,每次收到数据都会得到 sctp_sndrcvinfo 结构的指针, 客户端不希望得到 自本地SCTP栈的通知
+    setsockopt(sock_fd, IPPROTO_SCTP, SCTP_EVENTS, &evnts, sizeof(evnts));
+    if (echo_to_all == 0)
+        sctpstr_cli (stdin, sock_fd, (struct sockaddr*)&servaddr, sizeof(servaddr));
+          //
+    else
+        sctpstr_cli_echoall (stdin, sock_fd, (struct sockaddr*)&servaddr, sizeof(servaddr));
+          //
+    shutdown(sock_fd,SHUT_RDWR );
+    return 0;
+}
+
+
+/*
+ * 默认客户端处理函数, 要求用户输出 0x12 数字或 123 这种十进制或八进制数字
+ */
+void
+sctpstr_cli(FILE* fp, int sock_fd, struct sockaddr* to, socklen_t tolen){
+    struct sockaddr_in      peeraddr;
+    struct sctp_sndrcvinfo  sri;
+    char   sendline[MAXLINE], recvline[MAXLINE];
+    socklen_t  len;
+    size_t     out_sz;
+    ssize_t    rd_sz;
+    int        msg_flags;
+    
+    memset(&sri, 0, sizeof(sri));
+    while ( fgets(sendline, MAXLINE, fp) != NULL){
+        if (sendline[0] != '[' ){
+            fprintf (stderr ,"Error, line must be of the from '[streamnum] text'");
+            continue;
+        }
+        sri.sinfo_stream = strtol(&sendline[1], NULL, 0);  // 流号
+        out_sz = strlen(sendline);
+        sctp_sendmsg(sock_fd, sendline, out_sz, to, tolen, 0, 0, sri.sinfo_stream, 0, 0 );
+        len = sizeof(peeraddr);
+        rd_sz = sctp_recvmsg(sock_fd, recvline, sizeof(recvline), (struct sockaddr*)&peeraddr, &len, &sri, &msg_flags);
+        printf("From str:%d seq:%d (assoc: 0x%x):", sri.sinfo_stream, sri.sinfo_ssn, (u_int)sri.sinfo_assoc_id);
+        printf("%.*s",rd_sz, recvline); //按照rd_sz 表示的数值 来输出 recvline中多少个字符.
+                                        //如果 rd_sz =5 ,那么就输出 recvline中的5个字符串.
+    }
+}
+
+void
+sctpstr_cli_echoall (FILE* fp, int sock_fd, struct sockaddr* to, socklen_t tolen){
+    struct     sockaddr_in         peeraddr;
+    struct     sctp_sndrcvinfo     sri;
+    char       recvline[SCTP_MAXLINE],sendline[SCTP_MAXLINE] = { [0 ... SCTP_MAXLINE-1]= 0};;
+    socklen_t  len;
+    int        i, strsz;
+    long       rd_sz;
+    int        msg_flags;
+    
+    memset(&sri, 0, sizeof(sri));
+    while ( fgets(sendline, SCTP_MAXLINE -9 , fp) != NULL ){
+        strsz =  strlen(sendline);
+        if ( sendline[strsz -1] == '\n' ){   // 删除 fp 输入的最后换行符.修改为 \0 并修改长度
+            sendline[strsz- 1] = '\0';
+            strsz--;
+        }
+        for (i=0; i<SERV_MAX_SCTP_STRM; i++){  // 正常的最大流 , i是指定的流号
+            snprintf(sendline+strsz, sizeof(sendline)-strsz, ".msg.%d", i);
+            sctp_sendmsg(sock_fd, sendline, strlen(sendline)+1, to, tolen, 0, 0, i, 0, 0);
+        }
+        for (i=0; i<SERV_MAX_SCTP_STRM; i++){
+            len = sizeof(peeraddr);
+            rd_sz = sctp_recvmsg(sock_fd, recvline, sizeof(recvline), (struct sockaddr*)&peeraddr, &len, &sri, &msg_flags);
+            printf( "From str:%d seq:%d (assoc:0x%x):" ,sri.sinfo_stream, sri.sinfo_ssn,(u_int)sri.sinfo_assoc_id  );
+            printf("%.*s\n", (int)rd_sz, recvline);
+        }
+    }
+}
+
+```
 
