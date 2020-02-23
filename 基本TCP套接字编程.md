@@ -97,7 +97,7 @@ int connect(int sockfd, const struct sockaddr* servaddr, socklen_t addrlen);
   - 端口
     - 指定端口  : 只接受来自这个端口的连接信息(SYN)
     - 不指定端口: 内核会为相应的套接字选择一个临时端口, 通常是不可预测的.(`只有RPC(远程过程调用)服务器会用`)
-      - 可以使用 `gitsockname` 函数 ,来得到内核所选择临时端口值,也就是返回 **协议地址**.
+      - 可以使用 `getsockname` 函数 ,来得到内核所选择临时端口值,也就是返回 **协议地址**.
 
 ```c
 #include<sys/socket.h>
@@ -191,4 +191,3 @@ int  close (int sockfd);
 
 
 
-## 
