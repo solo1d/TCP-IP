@@ -66,7 +66,7 @@ ssize_t sendto  ( int sockfd, const void* buff, size_t nbytes, int flags,
 	参数:  sockfd : UDP套接字
          buff  : 发送或接收数据的缓冲区的指针
          nbytes: 读写字节数,不会超过buff缓冲区大小
-         flags :   MSG_OOB   处理带外数据
+         flags :   MSG_OOB   处理 外带数据
                    MSG_PEEK  偷看传入的消息
                    MSG_WAITALL  等待完整的请求或错误
                    一般这个参数给0即可.

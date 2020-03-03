@@ -6,6 +6,7 @@
 - [syslog函数](#syslog函数)
 - [daemon_init自定义函数](#daemon_init自定义函数)
 - [作为守护进程运行的时间获取服务器程序](#作为守护进程运行的时间获取服务器程序)
+- [守护进程范例:将时间信息写入文件](#守护进程范例:将时间信息写入文件)
 - 
 
 
@@ -14,7 +15,10 @@
 
 
 
-
+- **`/etc/services` 文件中定义的是服务字段**
+- **`/etc/protocols` 文件中定义的是互联网(IP)协议**
+- **`/etc/rsyslog.conf`  日志syslogd 守护进程的配置文件**
+- 
 
 ## 关键概念
 
@@ -186,6 +190,7 @@ void syslog (int priority, const char* message, ... );  // 这个函数会占用
 		  priority: 级别(level) 和设施(facility) 两者的组合.  具体参数写在下面两个表格中.
                  级别可随错误性质改变.
                  设施: 用于标识消息发送进程类型的设施.
+                     这个选项标识了 该日志会写入的哪个文件中.
                  默认值是   LOG_NOTICE|LOG_USER
        message: 出错消息,和 printf()函数相同,后面还支持 %d 等规范输出. ("pp%d",a)
 
@@ -230,6 +235,22 @@ void syslog (int priority, const char* message, ... );  // 这个函数会占用
 |   LOG_MAIL    |          邮件系统           |  LOG_LOCAL7   |        本地使用         |
 |   LOG_NEWS    |        网络新闻系统         |  LOG_SYSLOG   | 由syslogd内部产生的消息 |
 | **LOG_USER**  | **任意的用户级消息 (默认)** |   LOG_UUCP    |        UUCP系统         |
+
+```c
+#include <stdio.h>
+#include <syslog.h>
+int
+main(int argc, char* argv[]){
+    openlog(argv[0], LOG_CONS|LOG_PID, LOG_MAIL); // 设置 消息类型是 MAIN 邮件系统
+    int count = 0;
+    while (count < 5) {
+        syslog(LOG_INFO, "%d, log info test...", count); // 写入到文件 /var/log/mail.info 中
+        ++count;
+    }
+    closelog();
+    return 0;
+}
+```
 
 
 
@@ -312,6 +333,337 @@ int main(int argc, const char * argv[]) {
 
 
 ## 作为守护进程运行的时间获取服务器程序
+
+```c
+#include <stdio.h>
+#include <syslog.h>
+#include <unistd.h>
+#include <sys/errno.h>
+#include <sys/types.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <string.h>
+#include <sys/un.h>
+#include <signal.h>
+
+#define MAXLINE 1024
+#define LISTENQ 1024
+
+
+#define MAXFD   64
+
+int   daemon_proc;
+int   Tcp_listen  (const char *, const char *, socklen_t *);
+int   daemon_init (const char* , int );
+char* sock_ntop (const struct sockaddr *sa, socklen_t salen);
+
+int
+main(int argc, const char * argv[]) {
+    int         listenfd, connfd;   // 监听套接字和连接套接字
+    socklen_t   addrlen,  len;
+    struct  sockaddr* cliaddr;
+    char  buff[MAXLINE] = { [0 ... MAXLINE-1] = '\0' };
+    time_t  ticks;
+    
+    if (argc < 2 || argc > 3){
+        fprintf(stderr, "usage: daytimetcpsrv2 [ <host> ] <service or port> \n");
+        exit(errno);
+    }
+    
+    daemon_init(argv[0], 0);
+    
+    if (argc == 2 )
+        listenfd = Tcp_listen(NULL, argv[1], &addrlen);
+    else
+        listenfd = Tcp_listen(argv[1], argv[2], &addrlen);
+    
+    cliaddr = malloc(addrlen);
+    
+    for (; ;){
+        len = addrlen;
+        connfd = accept(listenfd, cliaddr, &len);
+        fprintf( stdout, "connection from %s", sock_ntop(cliaddr, len));
+        ticks = time(NULL);
+        snprintf(buff, sizeof(buff), "%.24s\r\n", ctime(&ticks));
+        write(connfd, buff, strlen(buff));
+        close(connfd);
+    }
+    return 0;
+}
+
+
+int
+Tcp_listen(const char *host, const char *serv, socklen_t *addrlenp)
+{
+    int                listenfd, n;
+    const int          on = 1;
+    struct addrinfo    hints, *res, *ressave;
+
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if ( (n = getaddrinfo(host, serv, &hints, &res)) != 0){
+        fprintf( stderr ,"tcp_listen error for %s, %s: %s",
+                 host, serv, gai_strerror(n));
+        exit(errno);
+    }
+    ressave = res;
+
+    do {
+        listenfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+        if (listenfd < 0)
+            continue;        /* error, try next one */
+
+        setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+        if (bind(listenfd, res->ai_addr, res->ai_addrlen) == 0)
+            break;            /* success */
+
+        close(listenfd);    /* bind error, close and try next one */
+    } while ( (res = res->ai_next) != NULL);
+
+    if (res == NULL){    /* errno from final socket() or bind() */
+        fprintf( stderr ,"tcp_listen error for %s, %s", host, serv);
+        exit(errno);
+    }
+
+    listen(listenfd, LISTENQ);
+
+    if (addrlenp)
+        *addrlenp = res->ai_addrlen;    /* return size of protocol address */
+
+    freeaddrinfo(ressave);
+
+    return(listenfd);
+}
+    
+int
+daemon_init (const char* pname, int facility){
+    int    i;
+    pid_t  pid;
+    
+    if ( (pid = fork()) < 0)
+        return (-1);     // 没有出现子进程, 出错了
+    else if (pid)      // 父进程终止, 因为父进程会得到正数值
+        exit(0);
+    printf ("父进程死亡, 第一个子进程存活 PID= %d\n", getpid());
+    /* 第一个子进程 ,  子进程继承了父进程的 进程组ID,保证了可以调用 setsid()创建会话  */
+    if (setsid()  < 0)   // setsid() 创建一个会话,只有子进程才可创建会话, 会话包含多个进程组. 当前进程变成新会话的会话头以及新进程组的进程组头进程 ,从而不再有控制终端
+        return (-1);    // 创建进程组失败
+    
+    signal(SIGHUP, SIG_IGN);  // 获取 信号,并忽略它, 因为会话头进程终止时,其会话中所有进程都会收到 SIGHUP信号.
+    
+    
+    if ( (pid = fork()) < 0)
+        return (-1);           //再次创建一个子进程, 第二个子进程
+    else if (pid)
+        exit(0);              // 第一个子进程退出
+    /* fork 两次的 目的就是防止终端产生的一些信号让进程退出, 以及确保本守护进程将来即使打开了一个终端设备,也不会自动获得控制终端 */
+    
+    /* 第二个子进程 */
+    printf("第一个子进程死亡, 第二个子进程存存活, PID=%d\n", getpid());
+    daemon_proc = 1;
+    chdir("/home/pi/temp");   // 切换工作目录, 参数必须是是绝对路径,  fchdir() 参数是相对路径
+    
+    /* 关闭无用的描述符 */
+    for (i =0; i < MAXFD ; i++)
+        close(i);
+    
+    /* 将stdin，stdout和stderr重定向到 /dev/null */
+    open ("in", O_RDONLY);
+    open ("out", O_RDWR);
+    open ("err", O_RDWR);
+    
+    openlog(pname, LOG_PID, facility);
+    
+    
+    /* 进来的是父进程,  出去的是第二个子进程, 并且拥有一个会话*/
+    return  0;
+}
+
+char *
+sock_ntop(const struct sockaddr *sa, socklen_t salen)
+{
+    char        portstr[8];
+    static char str[128];        /* Unix domain is largest */
+
+    switch (sa->sa_family) {
+    case AF_INET: {
+        struct sockaddr_in    *sin = (struct sockaddr_in *) sa;
+
+        if (inet_ntop(AF_INET, &sin->sin_addr, str, sizeof(str)) == NULL)
+            return(NULL);
+        if (ntohs(sin->sin_port) != 0) {
+            snprintf(portstr, sizeof(portstr), ":%d", ntohs(sin->sin_port));
+            strcat(str, portstr);
+        }
+        return(str);
+    }
+/* end sock_ntop */
+
+#ifdef    IPV6
+    case AF_INET6: {
+        struct sockaddr_in6    *sin6 = (struct sockaddr_in6 *) sa;
+
+        str[0] = '[';
+        if (inet_ntop(AF_INET6, &sin6->sin6_addr, str + 1, sizeof(str) - 1) == NULL)
+            return(NULL);
+        if (ntohs(sin6->sin6_port) != 0) {
+            snprintf(portstr, sizeof(portstr), "]:%d", ntohs(sin6->sin6_port));
+            strcat(str, portstr);
+            return(str);
+        }
+        return (str + 1);
+    }
+#endif
+
+#ifdef    AF_UNIX
+    case AF_UNIX: {
+        struct sockaddr_un    *unp = (struct sockaddr_un *) sa;
+
+            /* OK to have no pathname bound to the socket: happens on
+               every connect() unless client calls bind() first. */
+        if (unp->sun_path[0] == 0)
+            strcpy(str, "(no pathname bound)");
+        else
+            snprintf(str, sizeof(str), "%s", unp->sun_path);
+        return(str);
+    }
+#endif
+
+#ifdef    HAVE_SOCKADDR_DL_STRUCT
+    case AF_LINK: {
+        struct sockaddr_dl    *sdl = (struct sockaddr_dl *) sa;
+
+        if (sdl->sdl_nlen > 0)
+            snprintf(str, sizeof(str), "%*s (index %d)",
+                     sdl->sdl_nlen, &sdl->sdl_data[0], sdl->sdl_index);
+        else
+            snprintf(str, sizeof(str), "AF_LINK, index=%d", sdl->sdl_index);
+        return(str);
+    }
+#endif
+    default:
+        snprintf(str, sizeof(str), "sock_ntop: unknown AF_xxx: %d, len %d",
+                 sa->sa_family, salen);
+        return(str);
+    }
+    return (NULL);
+}
+
+```
+
+
+
+## 守护进程范例:将时间信息写入文件
+
+- 每2秒向 `/Users/ns/time/time.txt` 文件写入当前时间.  Fri jan 25 12:02:44 2019
+- 其中包括 : 
+  - **获取当前时间, 时间格式化输出 ,打开文件和写入文件, 定时器, 信号捕捉, 信号处理, 文件描述符操作.**
+
+```c
+#include <stdio.h>
+#include <syslog.h>
+#include <unistd.h>
+#include <sys/errno.h>
+#include <sys/types.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <string.h>
+#include <sys/un.h>
+#include <sys/time.h>
+#include <sys/stat.h>
+#include <signal.h>
+#include <semaphore.h>
+
+
+void dowork(int on){
+    // 得到当前的时间  / 将时间写入文件
+    time_t curtime;
+    time(&curtime);
+    // 将时间格式化
+    char* pt = ctime(&curtime);
+    //将时间写入文件
+    int fd = open("/Users/ns/temp/time.txt",O_RDWR| O_APPEND);
+    write(fd, pt, strlen(pt)+1);
+    close(fd);
+}
+
+
+int main(int argc, char* argv[]){
+    pid_t pid = fork();
+    if(pid > 0){
+        exit(0);
+    }else if ( pid < 0)
+        fprintf(stderr, "创建第一个子进程失败\n");
+		
+          // 注册信号捕捉
+    struct sigaction act;
+    act.sa_flags = 0;
+    act.sa_handler = dowork;
+    sigemptyset(&act.sa_mask);
+    sigaction(SIGALRM, &act, NULL);
+    signal(SIGHUP, SIG_IGN);
+  
+    pid = fork();
+        if(pid > 0){
+        exit(0);
+    }else if ( pid < 0)
+        fprintf(stderr, "创建第二个子进程失败\n");
+
+
+    if(pid == 0){
+
+        setsid();
+        chdir("/Users/ns/temp");  // 修改目录
+        umask(0);   // 重置文件掩码
+
+        close(STDIN_FILENO);
+        close(STDOUT_FILENO);
+        close(STDERR_FILENO);
+        // 关闭无用的文件描述符
+
+        // 保证程序处于运行状态.
+        
+        // 核心操作
+
+        
+        struct itimerval val;
+        
+        // 循环触发时间间隔设定
+        val.it_value.tv_usec= 0;
+        val.it_value.tv_sec = 2;
+        
+        //第一次触发时间设定
+        val.it_interval.tv_usec = 0;
+        val.it_interval.tv_sec = 1;
+
+        // 定时器完成
+        setitimer(ITIMER_REAL, &val,NULL);
+        
+
+        while(1);
+
+    }else{
+        perror("fork error");
+        exit(1);
+    }
+
+
+    return 0;
+
+```
+
+
 
 
 
