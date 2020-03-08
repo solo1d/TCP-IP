@@ -43,7 +43,7 @@ int socket(int family, int type, int protocol);
                       SOCK_SEQPACKET     有序分组套接字, SCTP 会采用
       								SOCK_RAW      原始套接字, 允许对底层协议的直接访问, 用于新网络协议测试
       protocol  参数: 给0 就好了, 表示按给定的域和套接字类型选择默认协议. 下面都是0表示的常值.
-                         IPPROTO_CP    TCP传输协议,
+                         IPPROTO_TCP   TCP传输协议,
                          IPPROTO_UDP   UDP传输协议
                          IPPROTO_SCTP  SCTP传输协议
 	 返回值:  是一个文件描述符, (就是个套接字)可以使用IO 文件操作来进行读写.  否则-1
