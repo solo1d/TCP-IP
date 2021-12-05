@@ -239,16 +239,15 @@ int main(void){
 // 获取原本的限制 , mac 是7168
     long open_max = sysconf(_SC_OPEN_MAX);
     printf("open_max=%ld\n", open_max);
-    
+
     // 设置, cur 和max 是 unsigned long long 类型
-    struct rlimit rit;
+    struct rlimit rit, nret;
     rit.rlim_cur = nret.rlim_max;
     rit.rlim_max = 6553500000;
     int ret = setrlimit(RLIMIT_NOFILE, &rit);
     
     
     // 获取
-    struct rlimit nret;
     open_max = getrlimit(RLIMIT_NOFILE, &nret);
     printf("getrlimit.rlim_cur = %llu,  max=%llu\n", nret.rlim_cur,nret.rlim_max);
     
