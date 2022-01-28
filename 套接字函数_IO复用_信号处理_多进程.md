@@ -22,7 +22,7 @@
       - [epoll模型思路](#epoll模型思路)
       - [epoll范例](#epoll范例)
       - [epoll反应堆工作模式](#epoll反应堆工作模式)
-    - [MacSO的kqueue接口](#MacSO的kqueue接口)
+    - [MacOS的kqueue接口](#MacOS的kqueue接口)
     - [select_poll_epoll的文件描述符上限问题](#select_poll_epoll的文件描述符上限问题)
     - [修改进程打开描述符上限](#修改进程打开描述符上限)
   - [shutdown函数](#shutdown函数)
@@ -1606,7 +1606,7 @@ int main(int argc, char *argv[])
 
 
 
-## MacSO的kqueue接口
+## MacOS的kqueue接口
 
 - kqueue 接口.
   - **本接口允许进程向内核注册描述所关注 kqueue事件的 事件过滤器(event filter).**

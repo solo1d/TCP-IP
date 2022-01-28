@@ -233,7 +233,7 @@ int  close (int sockfd);
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
-#include <resource.h>
+ #include <sys/resource.h>
 
 int main(void){
 // 获取原本的限制 , mac 是7168
