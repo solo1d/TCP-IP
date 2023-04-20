@@ -224,7 +224,7 @@ struct msqid_ds {
 
 int msgget(key_t key, int oflag);
 int semget(key_t key, int nsems, int oflag);
-int shmget(key_t key, size_t size, int oflag);
+int shmget(key_t key, size_t size, int oflag);   /* 这个和 shmat 配合使用即可 */
 
 /* 参数:   
      key : 是 ftok() 函数的返回值, 或 IPC_PRIVATE 宏,这宏保证 会创建一个 新的唯一的IPC对象
@@ -241,7 +241,65 @@ int shmget(key_t key, size_t size, int oflag);
 返回的标识符 是可以应用于所有进程的.
 
   
+
+void* shmat(int shmid, const void *shmaddr, int shmflg); 
+/*  把共享内存区对象映射到调用进程的地址空间。
+	连接共享内存标识符为shmid的共享内存，连接成功后把共享内存区对象映射到调用进程的地址空间，随后可像本地空间一样访问。
+	fork后子进程继承已连接的共享内存地址。exec后该子进程与已连接的共享内存地址自动脱离(detach)。进程结束后，已连接的共享内存地址会自动脱离(detach)。
+参数: 
+	msqid: 	 共享内存标识符
+	shmaddr: 指定共享内存出现在进程内存地址的什么位置，直接指定为NULL让内核自己决定一个合适的地址位置
+	shmflg:  SHM_RDONLY：为只读模式，其他为读写模式
+
+返回值:
+	成功：附加好的共享内存地址
+	出错：-1，错误原因存于error中
+错误代码：
+	EACCES：无权限以指定方式连接共享内存
+	EINVAL：无效的参数shmid或shmaddr
+	ENOMEM：核心内存不足
+*/
+
+
+int   shmdt(const void *shmaddr);
+/* 断开共享内存连接。
+	与shmat函数相反，是用来断开与共享内存附加点的地址，禁止本进程访问此片共享内存	。
+	本函数调用并不删除所指定的共享内存区，而只是将先前用shmat函数连接（attach）好的共享内存脱离（detach）目前的进程。
+参数: 
+	shmaddr：连接的共享内存的起始地址
+
+返回值:
+	成功：0
+	出错：-1，错误原因存于error中
+错误代码：
+	EINVAL：无效的参数shmaddr
+*/
   
+
+int shmctl(int shmid, int cmd, struct shmid_ds *buf);
+/* 完成对共享内存的控制。
+	与shmat函数相反，是用来断开与共享内存附加点的地址，禁止本进程访问此片共享内存	。
+参数: 
+	msqid：共享内存标识符
+	cmd:  有下面三个参数 
+				IPC_STAT：得到共享内存的状态(包括共享内存区的长度)，把共享内存的shmid_ds结构复制到buf中
+				IPC_SET：改变共享内存的状态，把buf所指的shmid_ds结构中的uid、gid、mode复制到共享内存的shmid_ds结构内
+				IPC_RMID：删除这片共享内存
+	buf: 共享内存管理结构体。具体说明参见共享内存内核结构定义部分, 传出部分。
+
+返回值:
+	成功：0
+	出错：-1，错误原因存于error中
+错误代码：
+	EACCESS：参数cmd为IPC_STAT，确无权限读取该共享内存
+	EFAULT：参数buf指向无效的内存地址
+	EIDRM：标识符为msqid的共享内存已被删除
+	EINVAL：无效的参数cmd或shmid
+	EPERM：参数cmd为IPC_SET或IPC_RMID，却无足够的权限执行
+*/
+
+
+
   // 范例,  连续输出 内核赋予的 消息队列标识符 10次
 #include <sys/stat.h>
 #include <sys/errno.h>
@@ -592,4 +650,503 @@ int main(int argc, const char * argv[]) {
 
 
 
+
+范例1： 父子进程通信范例
+
+```c
+#include <stdio.h>
+
+#include <unistd.h>
+
+#include <string.h>
+
+#include <sys/ipc.h>
+
+#include <sys/shm.h>
+
+#include <error.h>
+
+#define SIZE 1024
+
+int main()
+
+{
+
+    int shmid ;
+
+    char *shmaddr ;
+
+    struct shmid_ds buf ;
+
+    int flag = 0 ;
+
+    int pid ;
+
+ 
+
+    shmid = shmget(IPC_PRIVATE, SIZE, IPC_CREAT|0600 ) ;
+
+    if ( shmid < 0 )
+
+    {
+
+            perror("get shm  ipc_id error") ;
+
+            return -1 ;
+
+    }
+
+    pid = fork() ;
+
+    if ( pid == 0 )
+
+    {
+
+        shmaddr = (char *)shmat( shmid, NULL, 0 ) ;
+
+        if ( (int)shmaddr == -1 )
+
+        {
+
+            perror("shmat addr error") ;
+
+            return -1 ;
+
+ 
+
+        }
+
+        strcpy( shmaddr, "Hi, I am child process!\n") ;
+
+        shmdt( shmaddr ) ;
+
+        return  0;
+
+    } else if ( pid > 0) {
+
+        sleep(3 ) ;
+
+        flag = shmctl( shmid, IPC_STAT, &buf) ;
+
+        if ( flag == -1 )
+
+        {
+
+            perror("shmctl shm error") ;
+
+            return -1 ;
+
+        }
+
+ 
+
+        printf("shm_segsz =%d bytes\n", buf.shm_segsz ) ;
+
+        printf("parent pid=%d, shm_cpid = %d \n", getpid(), buf.shm_cpid ) ;
+
+        printf("chlid pid=%d, shm_lpid = %d \n",pid , buf.shm_lpid ) ;
+
+        shmaddr = (char *) shmat(shmid, NULL, 0 ) ;
+
+        if ( (int)shmaddr == -1 )
+
+        {
+
+            perror("shmat addr error") ;
+
+            return -1 ;
+
+ 
+
+        }
+
+        printf("%s", shmaddr) ;
+
+        shmdt( shmaddr ) ;
+
+        shmctl(shmid, IPC_RMID, NULL) ;
+
+    }else{
+
+        perror("fork error") ;
+
+        shmctl(shmid, IPC_RMID, NULL) ;
+
+    }
+
+ 
+
+    return 0 ;
+
+}
+
+
+/*
+编译 gcc shm.c –o shm。
+
+执行 ./shm，执行结果如下：
+
+shm_segsz =1024 bytes
+shm_cpid = 9503
+shm_lpid = 9504
+Hi, I am child process!
+*/
+```
+
+
+
+范例2:多进程读写范例
+
+```c
+多进程读写即一个进程写共享内存，一个或多个进程读共享内存。下面的例子实现的是一个进程写共享内存，一个进程读共享内存。
+
+（1）下面程序实现了创建共享内存，并写入消息。
+ 
+shmwrite.c源代码如下：
+  
+#include <stdio.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <string.h>
+  
+typedef struct{
+    char name[8];
+    int age;
+} people;
+
+
+int main(int argc, char** argv)
+{
+
+    int shm_id,i;
+    key_t key;
+    char temp[8];
+    people *p_map;
+    char pathname[30] ;
+ 
+
+    strcpy(pathname,"/tmp") ;
+    key = ftok(pathname,0x03);
+    if(key==-1)
+    {
+        perror("ftok error");
+        return -1;
+    }
+
+    printf("key=%d\n",key) ;
+    shm_id=shmget(key,4096,IPC_CREAT|IPC_EXCL|0600); 
+    if(shm_id==-1)
+    {
+        perror("shmget error");
+        return -1;
+    }
+  
+    printf("shm_id=%d\n", shm_id) ;
+    p_map=(people*)shmat(shm_id,NULL,0);
+    memset(temp, 0x00, sizeof(temp)) ;
+    strcpy(temp,"test") ;
+    temp[4]='\0';
+    for(i = 0;i<3;i++)
+    {
+        temp[4]+=1;
+        strncpy((p_map+i)->name,temp,5);
+        (p_map+i)->age=0+i;
+    }
+
+    shmdt(p_map) ;
+    return 0 ;
+}
+```
+
+范例3:实现从共享内存读消息。
+
+```c
+shmread.c源代码如下：
+  
+#include <stdio.h>
+#include <string.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+typedef struct{
+    char name[8];
+    int age;
+} people;
+
+int main(int argc, char** argv)
+{
+    int shm_id,i;
+    key_t key;
+    people *p_map;
+    char pathname[30] ;
+ 
+
+    strcpy(pathname,"/tmp") ;
+    key = ftok(pathname,0x03);
+    if(key == -1)
+    {
+        perror("ftok error");
+        return -1;
+    }
+
+    printf("key=%d\n", key) ;
+    shm_id = shmget(key,0, 0);   
+    if(shm_id == -1)
+    {
+        perror("shmget error");
+        return -1;
+    }
+
+    printf("shm_id=%d\n", shm_id) ;
+    p_map = (people*)shmat(shm_id,NULL,0);
+    for(i = 0;i<3;i++)
+    {
+        printf( "name:%s\n",(*(p_map+i)).name );
+        printf( "age %d\n",(*(p_map+i)).age );
+    }
+
+    if(shmdt(p_map) == -1)
+    {
+        perror("detach error");
+        return -1;
+    }
+
+    return 0 ;
+}
+
+
+/*
+编译与执行
+
+①    编译gcc shmwrite.c -o  shmwrite。
+②    执行./shmwrite，执行结果如下：
+key=50453281
+shm_id=688137
+
+③    编译gcc shmread.c -o shmread。
+④    执行./shmread，执行结果如下：
+
+key=50453281
+shm_id=688137
+name:test1
+age 0
+name:test2
+age 1
+name:test3
+age 2
+
+⑤    再执行./shmwrite，执行结果如下：
+key=50453281
+shmget error: File exists
+⑥    使用ipcrm -m 688137删除此共享内存。
+
+*/
+```
+
+共享内存通信代码：
+
+父进程：
+
+```c++
+#include <iostream>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <cstring>
+
+using namespace std;
+
+#define SHM_KEY 1234
+#define SHM_SIZE 1024
+
+int main()
+{
+   // 创建共享内存
+   int shmid = shmget(SHM_KEY, SHM_SIZE, IPC_CREAT | 0666);
+   if(shmid == -1)
+   {
+       cerr << "shmget failed" << endl;
+       return 1;
+   }
+
+   // 连接共享内存
+   void* addr = shmat(shmid, NULL, 0);
+   if(addr == (void*)-1)
+   {
+       cerr << "shmat failed" << endl;
+       return 1;
+   }
+
+   // 向共享内存写入数据
+   string message = "hello from parent process";
+   memcpy(addr, message.c_str(), message.size() + 1);
+
+   cout << "parent process: data written to shared memory" << endl;
+
+   // 挂起进程，等待子进程读取共享内存中的数据
+   pause();
+
+   // 断开与共享内存的连接
+   shmdt(addr);
+
+   // 删除共享内存
+   shmctl(shmid, IPC_RMID, NULL);
+
+   return 0;
+}
+```
+
+子进程：
+
+```c++
+#include <iostream>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <cstring>
+
+using namespace std;
+
+#define SHM_KEY 1234
+#define SHM_SIZE 1024
+
+int main()
+{
+   // 连接共享内存
+   int shmid = shmget(SHM_KEY, SHM_SIZE, 0666);
+   if(shmid == -1)
+   {
+       cerr << "shmget failed" << endl;
+       return 1;
+   }
+
+   void* addr = shmat(shmid, NULL, 0);
+   if(addr == (void*)-1)
+   {
+       cerr << "shmat failed" << endl;
+       return 1;
+   }
+
+   // 从共享内存中读取数据
+   string message((char*)addr);
+   cout << "child process: message received: " << message << endl;
+
+   // 断开与共享内存的连接
+   shmdt(addr);
+
+   // 向父进程发送信号，让其继续执行
+   kill(getppid(), SIGCONT);
+
+   return 0;
+}
+```
+
+消息队列通信代码：
+
+父进程：
+
+```c++
+#include <iostream>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <cstring>
+
+using namespace std;
+
+#define MSG_KEY 1234
+
+struct msgbuf
+{
+   long mtype;
+   char mtext[1024];
+};
+
+int main()
+{
+   // 创建消息队列
+   int msqid = msgget(MSG_KEY, IPC_CREAT | 0666);
+   if(msqid == -1)
+   {
+       cerr << "msgget failed" << endl;
+       return 1;
+   }
+
+   // 构造消息
+   msgbuf msg;
+   msg.mtype = 1;
+   strcpy(msg.mtext, "hello from parent process");
+
+   // 发送消息到消息队列
+   if(msgsnd(msqid, &msg, strlen(msg.mtext) + 1, 0) == -1)
+   {
+       cerr << "msgsnd failed" << endl;
+       return 1;
+   }
+
+   cout << "parent process: message sent to message queue" << endl;
+
+   // 挂起进程，等待子进程从消息队列中读取数据
+   pause();
+
+   // 删除消息队列
+   msgctl(msqid, IPC_RMID, NULL);
+
+   return 0;
+}
+```
+
+子进程：
+
+```c++
+#include <iostream>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <cstring>
+
+using namespace std;
+
+#define MSG_KEY 1234
+
+struct msgbuf
+{
+   long mtype;
+   char mtext[1024];
+};
+
+int main()
+{
+   // 连接消息队列
+   int msqid = msgget(MSG_KEY, 0666);
+   if(msqid == -1)
+   {
+       cerr << "msgget failed" << endl;
+       return 1;
+   }
+
+   // 接收消息
+   msgbuf msg;
+   if(msgrcv(msqid, &msg, 1024, 1, 0) == -1)
+   {
+       cerr << "msgrcv failed" << endl;
+       return 1;
+   }
+
+   cout << "child process: message received: " << msg.mtext << endl;
+
+   // 向父进程发送信号，让其继续执行
+   kill(getppid(), SIGCONT);
+
+   return 0;
+}
+```
 

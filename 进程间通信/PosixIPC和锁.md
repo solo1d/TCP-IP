@@ -805,6 +805,7 @@ int main(){
     }
         
     munmap(p, 1024);
+  	close(fd);
 }
 
 ```
