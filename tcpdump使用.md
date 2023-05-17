@@ -1,7 +1,7 @@
 ## 保存 tcpdump 抓包结果
 
 ```bash
-$ tcpdump -i eth0 -w dump.pcap
+$ tcpdump -i eth0 -w dump.pcapng
 
 ```
 
