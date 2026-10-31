@@ -70,7 +70,7 @@ AF_KEY 密钥套接字, 用域支持基于机密的安全性, 跟路由套接字
 范例:  int lfd = socket(AF_INET, SOCK_STREAM, 0);
 ```
 
-![基本TCP客户/服务器程序套接字函数](assets/基本TCP客户:服务器程序套接字函数.png)
+![基本TCP客户/服务器程序套接字函数](assets/基本TCP客户_服务器程序套接字函数.png)
 
 
 
